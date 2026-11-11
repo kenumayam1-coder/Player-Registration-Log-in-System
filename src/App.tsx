@@ -1,10 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
+import type { ChangeEvent, FormEvent, MouseEvent } from "react";
 import type { InventoryCategory, InventoryItem, Player, PlayerClass } from "./types";
+import {supabase} from "./lib/supabase";
+
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      [elemName: string]: any;
+    }
+  }
+}
 
 const STORAGE_KEY = "player-system-players-v1";
 const SESSION_KEY = "player-system-current-player";
-
+// Player Class
 const classes: PlayerClass[] = [
   "Swordsman",
   "Archer",
@@ -14,7 +23,7 @@ const classes: PlayerClass[] = [
   "Mage",
 ];
 
-const categories: InventoryCategory[] = ["Armor", "Weapons", "Misc Item"];
+const categories: InventoryCategory[] = ["Armor", "Weapons", "Skills", "Misc Item"];
 
 function readPlayers(): Player[] {
   try {
@@ -27,7 +36,7 @@ function readPlayers(): Player[] {
 function makeAccountNumber(): string {
   return `PLY-${Date.now().toString().slice(-7)}-${Math.floor(100 + Math.random() * 900)}`;
 }
-
+// Main App component
 export default function App() {
   const [players, setPlayers] = useState<Player[]>(readPlayers);
   const [currentPlayerId, setCurrentPlayerId] = useState<string | null>(
@@ -43,6 +52,7 @@ export default function App() {
   const [notice, setNotice] = useState("");
   const [itemName, setItemName] = useState("");
   const [itemCategory, setItemCategory] = useState<InventoryCategory>("Weapons");
+  
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(players));
@@ -58,6 +68,7 @@ export default function App() {
     [players, currentPlayerId],
   );
 
+ // Function to handle player registration
   function register(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -74,8 +85,11 @@ export default function App() {
       return;
     }
     if (players.some((player) => player.username.toLowerCase() === cleanUsername.toLowerCase())) {
-      setError("That username is already registered. Please choose another.");
+      setError("That username is already registered. Choose another.");
       return;
+    }
+    if (players.some((player) => player.email.toLowerCase() === cleanEmail.toLowerCase())) {
+      setError("That email address is already registered. Choose another");
     }
 
     const player: Player = {
@@ -92,23 +106,27 @@ export default function App() {
     setPassword("");
     setEmail("");
   }
-
+  // Login function to authenticate a player based on username, email, or password
   function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setNotice("");
+   
     const player = players.find(
       (candidate) =>
-        candidate.username.toLowerCase() === username.trim().toLowerCase() &&
+        candidate.username.toLowerCase() === username.trim().toLowerCase() ||
+        candidate.email.toLowerCase() === email.trim().toLowerCase() ||
         candidate.password === password,
     );
+
     if (!player) {
-      setError("Username or password is incorrect. If you're new, register first.");
+      setError("Username, Email Address or password incorrect. Please try again.");
       return;
     }
     setCurrentPlayerId(player.accountNumber);
     setUsername("");
     setPassword("");
+    setEmail("");
   }
 
   function logout() {
@@ -135,23 +153,21 @@ export default function App() {
     );
     setItemName("");
   }
-
   function removeItem(itemId: string) {
     if (!currentPlayer) return;
     setPlayers((previous) =>
-      previous.map((player) =>
+      previous.map((player) => 
         player.accountNumber === currentPlayer.accountNumber
           ? { ...player, inventory: player.inventory.filter((item) => item.id !== itemId) }
           : player,
       ),
     );
   }
-
   if (currentPlayer) {
     return (
       <main className="app-shell">
         <header className="topbar">
-          <a className="brand" href="#" onClick={(event) => event.preventDefault()}>
+          <a className="brand" href="#" onClick={(event: MouseEvent<HTMLAnchorElement>) => event.preventDefault()}>
             <span className="brand-mark">P</span>
             <span>PLAYER<span className="brand-light">SYSTEM</span></span>
           </a>
@@ -161,12 +177,11 @@ export default function App() {
             <button className="button button-quiet" onClick={logout}>Log out ↗</button>
           </div>
         </header>
-
-        <section className="dashboard-heading">
+        
+        <section className="dashboard-heading"> 
           <div>
-            <p className="eyebrow">PLAYER COMMAND CENTER</p>
             <h1>Dashboard<span className="accent">.</span></h1>
-            <p className="subheading">Welcome back, {currentPlayer.username}. Your adventure starts here.</p>
+            <p className="subheading">Welcome back, {currentPlayer.username}.</p>
           </div>
           <div className="level-chip"><span>✦</span> PLAYER PROFILE</div>
         </section>
@@ -192,7 +207,7 @@ export default function App() {
 
           <article className="panel inventory-panel">
             <div className="panel-heading">
-              <div><p className="eyebrow">YOUR COLLECTION</p><h2>Inventory</h2></div>
+              <div><p className="eyebrow">Player</p><h2>Inventory</h2></div>
               <span className="item-count">{currentPlayer.inventory.length} ITEMS</span>
             </div>
             <form className="add-item-form" onSubmit={addItem}>
@@ -200,13 +215,13 @@ export default function App() {
                 aria-label="Item name"
                 placeholder="Enter item name..."
                 value={itemName}
-                onChange={(event) => setItemName(event.target.value)}
+                onChange={(event: ChangeEvent<HTMLInputElement>) => setItemName(event.target.value)}
                 maxLength={40}
               />
               <select
                 aria-label="Item category"
                 value={itemCategory}
-                onChange={(event) => setItemCategory(event.target.value as InventoryCategory)}
+                onChange={(event: ChangeEvent<HTMLSelectElement>) => setItemCategory(event.target.value as InventoryCategory)}
               >
                 {categories.map((category) => <option key={category}>{category}</option>)}
               </select>
@@ -214,7 +229,7 @@ export default function App() {
             </form>
             <div className="inventory-categories">
               {categories.map((category) => {
-                const items = currentPlayer.inventory.filter((item) => item.category === category);
+                const items = currentPlayer.inventory.filter((item: InventoryItem) => item.category === category);
                 const symbol = category === "Armor" ? "⬡" : category === "Weapons" ? "⚔" : "✧";
                 return (
                   <div className="inventory-category" key={category}>
@@ -227,7 +242,7 @@ export default function App() {
                       <p className="empty-state">No {category.toLowerCase()} added yet.</p>
                     ) : (
                       <ul className="item-list">
-                        {items.map((item) => (
+                        {items.map((item: InventoryItem) => (
                           <li key={item.id}>
                             <span>{item.name}</span>
                             <button className="remove-button" onClick={() => removeItem(item.id)} aria-label={`Remove ${item.name}`}>×</button>
@@ -241,7 +256,7 @@ export default function App() {
             </div>
           </article>
         </section>
-        <footer className="footer">PLAYER SYSTEM <span>•</span> LOCAL DEMO BUILD</footer>
+        <footer className="footer">PLAYER SYSTEM <span>•</span> </footer>
       </main>
     );
   }
@@ -251,22 +266,19 @@ export default function App() {
       <div className="auth-decoration">
         <div className="decoration-orb orb-one" />
         <div className="decoration-orb orb-two" />
-        <div className="auth-brand"><span className="brand-mark">P</span> PLAYER<span className="brand-light">SYSTEM</span></div>
         <div className="hero-copy">
-          <p className="eyebrow">YOUR JOURNEY BEGINS</p>
-          <h1>Enter a world<br />of <span>possibilities.</span></h1>
-          <p>Create your player account, choose your class, and keep your gear organized in one place.</p>
         </div>
-        <div className="hero-footer"><span>✦</span> BUILD YOUR LEGACY</div>
+        <div className="hero-footer"><span></span></div>
       </div>
 
       <section className="auth-side">
         <div className="auth-card">
+          <div className ="Decoration-orb orb-three" />
           <div className="mobile-brand"><span className="brand-mark">P</span> PLAYER<span className="brand-light">SYSTEM</span></div>
           <div className="auth-heading">
-            <p className="eyebrow">{page === "login" ? "WELCOME BACK" : "NEW PLAYER REGISTRATION"}</p>
-            <h2>{page === "login" ? "Player Log in" : "Create Account"}<span className="accent">.</span></h2>
-            <p>{page === "login" ? "Enter your credentials to access your dashboard." : "Set up your player profile to begin your journey."}</p>
+            <p className="eyebrow">{page === "login" ? "WELCOME TO PLAYER SYSTEM" : "Player Register"}</p>
+            <h2>{page === "login" ? "Player System" : "Create Account"}<span className="accent">.</span></h2>
+            <p>{page === "login" ? "Log in to your account" : "Register for a new account"}</p>
           </div>
 
           <div className="auth-tabs">
@@ -279,22 +291,22 @@ export default function App() {
 
           {page === "login" ? (
             <form className="auth-form" onSubmit={login}>
-              <label>USERNAME<input autoComplete="username" placeholder="Enter your username" value={username} onChange={(event) => setUsername(event.target.value)} /></label>
-              <label>PASSWORD<div className="password-wrap"><input autoComplete="current-password" type={showPassword ? "text" : "password"} placeholder="Enter your password" value={password} onChange={(event) => setPassword(event.target.value)} /><button type="button" onClick={() => setShowPassword(!showPassword)}>{showPassword ? "HIDE" : "SHOW"}</button></div></label>
+              <label>USERNAME<input autoComplete="username" placeholder="Enter your username" value={username} onChange={(event: ChangeEvent<HTMLInputElement>) => setUsername(event.target.value)} /></label>
+              <label>PASSWORD<div className="password-wrap"><input autoComplete="current-password" type={showPassword ? "text" : "password"} placeholder="Enter your password" value={password} onChange={(event: ChangeEvent<HTMLInputElement>) => setPassword(event.target.value)} /><button type="button" onClick={() => setShowPassword(!showPassword)}>{showPassword ? "HIDE" : "SHOW"}</button></div></label>
               <button className="button button-primary submit-button" type="submit">Log in <span>→</span></button>
-              <p className="switch-copy">New to the system? <button type="button" onClick={() => { setPage("register"); setError(""); }}>Create an account</button></p>
+              <p className="switch-copy">new to the system? <button type="button" onClick={() => { setPage("register"); setError(""); }}>Create an account</button></p>
             </form>
           ) : (
             <form className="auth-form" onSubmit={register}>
-              <label>USERNAME<input autoComplete="username" placeholder="Choose a username" value={username} onChange={(event) => setUsername(event.target.value)} /></label>
-              <label>PASSWORD<div className="password-wrap"><input autoComplete="new-password" type={showPassword ? "text" : "password"} placeholder="At least 6 characters" value={password} onChange={(event) => setPassword(event.target.value)} /><button type="button" onClick={() => setShowPassword(!showPassword)}>{showPassword ? "HIDE" : "SHOW"}</button></div></label>
-              <label>EMAIL<input type="email" autoComplete="email" placeholder="you@example.com" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-              <label>CHOOSE YOUR CLASS<select value={playerClass} onChange={(event) => setPlayerClass(event.target.value as PlayerClass)}>{classes.map((item) => <option key={item}>{item}</option>)}</select></label>
+              <label>USERNAME<input autoComplete="username" placeholder="Choose a username" value={username} onChange={(event: ChangeEvent<HTMLInputElement>) => setUsername(event.target.value)} /></label>
+              <label>PASSWORD<div className="password-wrap"><input autoComplete="new-password" type={showPassword ? "text" : "password"} placeholder="At least 6 characters" value={password} onChange={(event: ChangeEvent<HTMLInputElement>) => setPassword(event.target.value)} /><button type="button" onClick={() => setShowPassword(!showPassword)}>{showPassword ? "HIDE" : "SHOW"}</button></div></label>
+              <label>EMAIL<input type="email" autoComplete="email" placeholder="you@example.com" value={email} onChange={(event: ChangeEvent<HTMLInputElement>) => setEmail(event.target.value)} /></label>
+              <label>CHOOSE YOUR CLASS<select value={playerClass} onChange={(event: ChangeEvent<HTMLSelectElement>) => setPlayerClass(event.target.value as PlayerClass)}>{classes.map((item) => <option key={item}>{item}</option>)}</select></label>
               <button className="button button-primary submit-button" type="submit">Register account <span>→</span></button>
               <p className="switch-copy">Already registered? <button type="button" onClick={() => { setPage("login"); setError(""); }}>Back to log in</button></p>
             </form>
           )}
-          <p className="storage-note"><span>●</span> Your demo account is saved locally in this browser.</p>
+          <p className="storage-note"><span>●</span> </p>
         </div>
       </section>
     </main>

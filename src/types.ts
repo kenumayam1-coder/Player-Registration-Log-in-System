@@ -4,9 +4,10 @@ export type PlayerClass =
   | "Assassin"
   | "Tank"
   | "SwordMage"
-  | "Mage";
+  | "Mage"
+  ;
 
-export type InventoryCategory = "Armor" | "Weapons" | "Misc Item";
+export type InventoryCategory = "Armor" | "Weapons"| "Skills" | "Misc Item" ;
 
 export interface InventoryItem {
   id: string;
