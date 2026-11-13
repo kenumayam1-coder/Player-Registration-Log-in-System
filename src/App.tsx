@@ -1,47 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ChangeEvent, FormEvent, MouseEvent } from "react";
-import type { InventoryCategory, InventoryItem, Player, PlayerClass } from "./types";
-import {supabase} from "./lib/supabase";
+import type { Player, PlayerClass } from "./types";
+import { supabase } from "./lib/supabase";
 
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      [elemName: string]: any;
-    }
-  }
-}
-
-const STORAGE_KEY = "player-system-players-v1";
-const SESSION_KEY = "player-system-current-player";
-// Player Class
 const classes: PlayerClass[] = [
-  "Swordsman",
-  "Archer",
-  "Assassin",
-  "Tank",
-  "SwordMage",
-  "Mage",
+  "Swordsman", "Archer", "Assassin", "Tank", "SwordMage", "Mage",
 ];
 
-const categories: InventoryCategory[] = ["Armor", "Weapons", "Skills", "Misc Item"];
-
-function readPlayers(): Player[] {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as Player[];
-  } catch {
-    return [];
-  }
-}
-
-function makeAccountNumber(): string {
-  return `PLY-${Date.now().toString().slice(-7)}-${Math.floor(100 + Math.random() * 900)}`;
-}
-// Main App component
 export default function App() {
-  const [players, setPlayers] = useState<Player[]>(readPlayers);
-  const [currentPlayerId, setCurrentPlayerId] = useState<string | null>(
-    () => localStorage.getItem(SESSION_KEY),
-  );
+  const [player, setPlayer] = useState<Player | null>(null);
   const [page, setPage] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -50,32 +17,47 @@ export default function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [itemName, setItemName] = useState("");
-  const [itemCategory, setItemCategory] = useState<InventoryCategory>("Weapons");
+  const [loading, setLoading] = useState(false);
+
+  async function loadPlayer(userId: string) {
+    const { data, error: profileError } = await supabase
+      .from("player_profiles")
+      .select("player_id, username, player_class")
+      .eq("player_id", userId)
+      .single();
+
+    if (profileError || !data) {
+      setError("Player profile could not be loaded.");
+      return;
+    }
+    setPlayer({
+      playerId: data.player_id,
+      username: data.username,
+      playerClass: data.player_class as PlayerClass,
+    });
+  }
+
+  useEffect(() => {
+    let mounted = true;
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (mounted && session) loadPlayer(session.user.id);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (mounted && session) {
+        setTimeout(() => { if (mounted) loadPlayer(session.user.id); }, 0);
+      } else if (mounted) {
+        setPlayer(null);
+      }
+    });
+    return () => { mounted = false; subscription.unsubscribe(); };
+  }, []);
   
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(players));
-  }, [players]);
-
-  useEffect(() => {
-    if (currentPlayerId) localStorage.setItem(SESSION_KEY, currentPlayerId);
-    else localStorage.removeItem(SESSION_KEY);
-  }, [currentPlayerId]);
-
-  const currentPlayer = useMemo(
-    () => players.find((player) => player.accountNumber === currentPlayerId) ?? null,
-    [players, currentPlayerId],
-  );
-
- // Function to handle player registration
-  function register(event: FormEvent<HTMLFormElement>) {
+  async function register(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setNotice("");
-
     const cleanUsername = username.trim();
-    const cleanEmail = email.trim();
+    const cleanEmail = email.trim().toLowerCase();
     if (!cleanUsername || !password || !cleanEmail) {
       setError("Please complete all fields.");
       return;
@@ -84,86 +66,77 @@ export default function App() {
       setError("Use a password with at least 6 characters.");
       return;
     }
-    if (players.some((player) => player.username.toLowerCase() === cleanUsername.toLowerCase())) {
-      setError("That username is already registered. Choose another.");
+
+    setLoading(true);
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email: cleanEmail,
+      password,
+      options: { data: { username: cleanUsername, player_class: playerClass } },
+    });
+    setLoading(false);
+
+    if (signUpError) {
+      setError(signUpError.message);
       return;
     }
-    if (players.some((player) => player.email.toLowerCase() === cleanEmail.toLowerCase())) {
-      setError("That email address is already registered. Choose another");
-    }
-
-    const player: Player = {
-      accountNumber: makeAccountNumber(),
-      username: cleanUsername,
-      password,
-      email: cleanEmail,
-      playerClass,
-      inventory: [],
-    };
-    setPlayers((previous) => [...previous, player]);
-    setCurrentPlayerId(player.accountNumber);
     setUsername("");
     setPassword("");
     setEmail("");
+    if (data.session) {
+      await loadPlayer(data.user!.id);
+    } else {
+      setNotice("Welcome New Player!");
+      setPage("login");
+    }
   }
-  // Login function to authenticate a player based on username, email, or password
-  function login(event: FormEvent<HTMLFormElement>) {
+
+  async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setNotice("");
-   
-    const player = players.find(
-      (candidate) =>
-        candidate.username.toLowerCase() === username.trim().toLowerCase() ||
-        candidate.email.toLowerCase() === email.trim().toLowerCase() ||
-        candidate.password === password,
-    );
-
-    if (!player) {
-      setError("Username, Email Address or password incorrect. Please try again.");
+    const identifier = username.trim();
+    if (!identifier || !password) {
+      setError("Enter your username/email and password.");
       return;
     }
-    setCurrentPlayerId(player.accountNumber);
+
+    setLoading(true);
+    let loginEmail = identifier.toLowerCase();
+    if (!identifier.includes("@")) {
+      const { data, error: lookupError } = await supabase.rpc("get_player_email_by_username", {
+        input_username: identifier,
+      });
+      if (lookupError || !data) {
+        setLoading(false);
+        setError("Incorrect username/email or password. Please try again.");
+        return;
+      }
+      loginEmail = data as string;
+    }
+
+    const { data, error: loginError } = await supabase.auth.signInWithPassword({
+      email: loginEmail,
+      password,
+    });
+    setLoading(false);
+    if (loginError || !data.user) {
+      setError("Incorrect username/email or password. Please try again.");
+      return;
+    }
+    await loadPlayer(data.user.id);
     setUsername("");
     setPassword("");
-    setEmail("");
   }
 
-  function logout() {
-    setCurrentPlayerId(null);
+  async function logout() {
+    await supabase.auth.signOut();
+    setPlayer(null);
     setPage("login");
     setNotice("You have logged out.");
     setError("");
   }
 
-  function addItem(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!currentPlayer || !itemName.trim()) return;
-    const newItem: InventoryItem = {
-      id: crypto.randomUUID(),
-      name: itemName.trim(),
-      category: itemCategory,
-    };
-    setPlayers((previous) =>
-      previous.map((player) =>
-        player.accountNumber === currentPlayer.accountNumber
-          ? { ...player, inventory: [...player.inventory, newItem] }
-          : player,
-      ),
-    );
-    setItemName("");
-  }
-  function removeItem(itemId: string) {
-    if (!currentPlayer) return;
-    setPlayers((previous) =>
-      previous.map((player) => 
-        player.accountNumber === currentPlayer.accountNumber
-          ? { ...player, inventory: player.inventory.filter((item) => item.id !== itemId) }
-          : player,
-      ),
-    );
-  }
-  if (currentPlayer) {
+  if (player) {
     return (
       <main className="app-shell">
         <header className="topbar">
@@ -173,15 +146,15 @@ export default function App() {
           </a>
           <div className="topbar-right">
             <span className="online-dot" />
-            <span className="signed-in">Signed in as <strong>{currentPlayer.username}</strong></span>
+            <span className="signed-in">Signed in as <strong>{player.username}</strong></span>
             <button className="button button-quiet" onClick={logout}>Log out ↗</button>
           </div>
         </header>
-        
-        <section className="dashboard-heading"> 
+
+        <section className="dashboard-heading">
           <div>
             <h1>Dashboard<span className="accent">.</span></h1>
-            <p className="subheading">Welcome back, {currentPlayer.username}.</p>
+            <p className="subheading">Welcome back, {player.username}.</p>
           </div>
           <div className="level-chip"><span>✦</span> PLAYER PROFILE</div>
         </section>
@@ -193,70 +166,18 @@ export default function App() {
               <span className="panel-icon">♙</span>
             </div>
             <div className="avatar-row">
-              <div className="avatar">{currentPlayer.username.slice(0, 1).toUpperCase()}</div>
-              <div><h3>{currentPlayer.username}</h3><p>{currentPlayer.playerClass}</p></div>
+              <div className="avatar">{player.username.slice(0, 1).toUpperCase()}</div>
+              <div><h3>{player.username}</h3><p>{player.playerClass}</p></div>
               <span className="status-pill">ACTIVE</span>
             </div>
             <div className="profile-details">
-              <div><span>PLAYER ID</span><strong>{currentPlayer.accountNumber}</strong></div>
-              <div><span>USERNAME</span><strong>{currentPlayer.username}</strong></div>
-              <div><span>EMAIL</span><strong>{currentPlayer.email}</strong></div>
-              <div><span>CLASS</span><strong>{currentPlayer.playerClass}</strong></div>
-            </div>
-          </article>
-
-          <article className="panel inventory-panel">
-            <div className="panel-heading">
-              <div><p className="eyebrow">Player</p><h2>Inventory</h2></div>
-              <span className="item-count">{currentPlayer.inventory.length} ITEMS</span>
-            </div>
-            <form className="add-item-form" onSubmit={addItem}>
-              <input
-                aria-label="Item name"
-                placeholder="Enter item name..."
-                value={itemName}
-                onChange={(event: ChangeEvent<HTMLInputElement>) => setItemName(event.target.value)}
-                maxLength={40}
-              />
-              <select
-                aria-label="Item category"
-                value={itemCategory}
-                onChange={(event: ChangeEvent<HTMLSelectElement>) => setItemCategory(event.target.value as InventoryCategory)}
-              >
-                {categories.map((category) => <option key={category}>{category}</option>)}
-              </select>
-              <button className="button button-primary" type="submit" disabled={!itemName.trim()}>+ Add</button>
-            </form>
-            <div className="inventory-categories">
-              {categories.map((category) => {
-                const items = currentPlayer.inventory.filter((item: InventoryItem) => item.category === category);
-                const symbol = category === "Armor" ? "⬡" : category === "Weapons" ? "⚔" : "✧";
-                return (
-                  <div className="inventory-category" key={category}>
-                    <div className="category-title">
-                      <span className="category-symbol">{symbol}</span>
-                      <strong>{category}</strong>
-                      <span className="category-count">{items.length}</span>
-                    </div>
-                    {items.length === 0 ? (
-                      <p className="empty-state">No {category.toLowerCase()} added yet.</p>
-                    ) : (
-                      <ul className="item-list">
-                        {items.map((item: InventoryItem) => (
-                          <li key={item.id}>
-                            <span>{item.name}</span>
-                            <button className="remove-button" onClick={() => removeItem(item.id)} aria-label={`Remove ${item.name}`}>×</button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                );
-              })}
+              <div><span>PLAYER ID</span><strong>{player.playerId}</strong></div>
+              <div><span>USERNAME</span><strong>{player.username}</strong></div>
+              <div><span>CLASS</span><strong>{player.playerClass}</strong></div>
             </div>
           </article>
         </section>
-        <footer className="footer">PLAYER SYSTEM <span>•</span> </footer>
+        
       </main>
     );
   }
@@ -264,37 +185,31 @@ export default function App() {
   return (
     <main className="auth-layout">
       <div className="auth-decoration">
-        <div className="decoration-orb orb-one" />
-        <div className="decoration-orb orb-two" />
-        <div className="hero-copy">
-        </div>
-        <div className="hero-footer"><span></span></div>
+        <div className="hero-copy" />
+        <div className="hero-footer"><span /></div>
       </div>
-
       <section className="auth-side">
         <div className="auth-card">
-          <div className ="Decoration-orb orb-three" />
+          <div className="Decoration-orb orb-three" />
           <div className="mobile-brand"><span className="brand-mark">P</span> PLAYER<span className="brand-light">SYSTEM</span></div>
           <div className="auth-heading">
             <p className="eyebrow">{page === "login" ? "WELCOME TO PLAYER SYSTEM" : "Player Register"}</p>
             <h2>{page === "login" ? "Player System" : "Create Account"}<span className="accent">.</span></h2>
             <p>{page === "login" ? "Log in to your account" : "Register for a new account"}</p>
           </div>
-
           <div className="auth-tabs">
             <button className={page === "login" ? "active" : ""} onClick={() => { setPage("login"); setError(""); }}>Log in</button>
             <button className={page === "register" ? "active" : ""} onClick={() => { setPage("register"); setError(""); }}>Registration</button>
           </div>
-
           {notice && <div className="notice-message">{notice}</div>}
           {error && <div className="error-message">{error}</div>}
 
           {page === "login" ? (
             <form className="auth-form" onSubmit={login}>
-              <label>USERNAME<input autoComplete="username" placeholder="Enter your username" value={username} onChange={(event: ChangeEvent<HTMLInputElement>) => setUsername(event.target.value)} /></label>
+              <label>USERNAME OR EMAIL<input autoComplete="username" placeholder="Enter username or email" value={username} onChange={(event: ChangeEvent<HTMLInputElement>) => setUsername(event.target.value)} /></label>
               <label>PASSWORD<div className="password-wrap"><input autoComplete="current-password" type={showPassword ? "text" : "password"} placeholder="Enter your password" value={password} onChange={(event: ChangeEvent<HTMLInputElement>) => setPassword(event.target.value)} /><button type="button" onClick={() => setShowPassword(!showPassword)}>{showPassword ? "HIDE" : "SHOW"}</button></div></label>
-              <button className="button button-primary submit-button" type="submit">Log in <span>→</span></button>
-              <p className="switch-copy">new to the system? <button type="button" onClick={() => { setPage("register"); setError(""); }}>Create an account</button></p>
+              <button className="button button-primary submit-button" type="submit" disabled={loading}>{loading ? "Please wait..." : "Log in"} <span>→</span></button>
+
             </form>
           ) : (
             <form className="auth-form" onSubmit={register}>
@@ -302,11 +217,10 @@ export default function App() {
               <label>PASSWORD<div className="password-wrap"><input autoComplete="new-password" type={showPassword ? "text" : "password"} placeholder="At least 6 characters" value={password} onChange={(event: ChangeEvent<HTMLInputElement>) => setPassword(event.target.value)} /><button type="button" onClick={() => setShowPassword(!showPassword)}>{showPassword ? "HIDE" : "SHOW"}</button></div></label>
               <label>EMAIL<input type="email" autoComplete="email" placeholder="you@example.com" value={email} onChange={(event: ChangeEvent<HTMLInputElement>) => setEmail(event.target.value)} /></label>
               <label>CHOOSE YOUR CLASS<select value={playerClass} onChange={(event: ChangeEvent<HTMLSelectElement>) => setPlayerClass(event.target.value as PlayerClass)}>{classes.map((item) => <option key={item}>{item}</option>)}</select></label>
-              <button className="button button-primary submit-button" type="submit">Register account <span>→</span></button>
-              <p className="switch-copy">Already registered? <button type="button" onClick={() => { setPage("login"); setError(""); }}>Back to log in</button></p>
+              <button className="button button-primary submit-button" type="submit" disabled={loading}>{loading ? "Please wait..." : "Register account"} <span>→</span></button>
+              <p className="switch-copy">Already registered? <button type="button" onClick={() => { setPage("login"); setError(""); setNotice(""); }}>Back to log in</button></p>
             </form>
           )}
-          <p className="storage-note"><span>●</span> </p>
         </div>
       </section>
     </main>

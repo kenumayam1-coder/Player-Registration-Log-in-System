@@ -320,7 +320,7 @@ button{
     border:1px solid #334354;
     border-radius:30px;
     padding:8px 12px;
-    color:#f0f0f0;
+    color:#141313;
     font-size:9px;
     letter-spacing:1.2px;
     font-weight:700
@@ -330,10 +330,11 @@ button{
     margin-right:6px
 }
 .dashboard-grid{
-    display:grid;
-    grid-template-columns:.9fr 1.1fr;
-    gap:20px;
-    align-items:start
+  width: 100%;
+   
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 .panel{
     background:#151f2c;
@@ -425,6 +426,14 @@ button{
     color:#dce5ed;
     text-align:right;
     overflow-wrap:anywhere
+}
+.profile-panel {
+  width: 100%;
+  max-width: 750px;
+  min-height: 400px;
+
+  padding: 35px;
+  border-radius: 16px;
 }
 .item-count{
     font-size:8px
